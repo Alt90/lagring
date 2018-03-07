@@ -182,7 +182,7 @@ class ImageAsset(Asset):
         if self.transform == 'crop':
             return self.size != img.size
         else:
-            return self.width > width or self.height > height
+            return self.width < width or self.height < height
 
     @staticmethod
     def _get_temp_path(dir=None, ext=''):
