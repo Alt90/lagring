@@ -27,7 +27,7 @@ class _AssetSource:
 
     @property
     def type(self):
-        if self.src is None:
+        if not self.src:
             return None
         elif isinstance(self.src, str):
             if os.path.isfile(self.src):
@@ -43,7 +43,7 @@ class _AssetSource:
 
     @property
     def stream(self):
-        if self.src is None:
+        if not self.src:
             return None
         elif isinstance(self.src, str):
             if os.path.isfile(self.src):
