@@ -173,6 +173,17 @@ class ImageAsset(Asset):
 
         return new_path
 
+    def _must_resize(self, img):
+        if not any([self.size, self.width, self.height]):
+            return False
+
+        width, height = img.size
+
+        if self.transform == 'crop':
+            return self.size != img.size
+        else:
+            return self.width > width or self.height > height
+
     @staticmethod
     def _get_temp_path(dir=None, ext=''):
         if ext and ext[:1] != '.':
@@ -180,7 +191,12 @@ class ImageAsset(Asset):
         return os.path.join(gettempdir() if dir is None else dir, str(uuid4()) + ext)
 
     def upload(self, storage, src, meta=None):
-        original_size = self._get_image_size(src.stream)
+        try:
+            img = Image.open(src.stream)
+        except OSError:
+            raise AssetProcessingException('Failed to open image')
+
+        original_size = img.size
 
         if self.constraint_type == 'min':
             if original_size[0] < self.size_constraint[0] or original_size[1] < self.size_constraint[1]:
@@ -192,46 +208,38 @@ class ImageAsset(Asset):
             if original_size[0] != self.size_constraint[0] and original_size[1] != self.size_constraint[1]:
                 raise AssetRequirementsException('Exact size constraint is not met')
 
-        try:
-            img = Image.open(src.stream)
-        except OSError:
-            raise AssetProcessingException('Failed to open image')
-
         if img.format in self.IMAGE_FORMATS:
             force_format = None
         else:
             force_format = self.DEFAULT_FORMAT
         extension = (force_format or img.format).lower()
 
-        if (self.size == img.size or ((self.width, self.height) == img.size)) and force_format is None:
-            # без изменений
-            new_path = self._get_temp_path(ext=extension)
-            if meta is None:
-                meta = self._size_to_dict(original_size)
-
-            with open(new_path, 'wb') as new_file:
-                src.stream.seek(0)
-                new_file.write(src.stream.read())
-        elif not any([self.size, self.width, self.height]):
-            # без обработки
+        if self._must_resize(img):
+            target_size = self._target_size(original_size)
+            temp = self._get_temp_path()
+            new_path = self._downsize(img, temp, target_size, self.transform, force_format=force_format)
+            log.debug('Processing image: {} {}'.format(self.transform, target_size))
+        elif force_format:
+            # изменение формата
             new_path = self._get_temp_path()
-            if meta is None:
-                meta = self._size_to_dict(original_size)
+
             try:
                 img.save(new_path,
-                         force_format or img.format,
+                         force_format,
                          quality=self.quality,
                          optimize=self.optimize,
                          progressive=self.progressive)
             except OSError:
                 raise AssetProcessingException('Failed to save temporary image')
         else:
-            target_size = self._target_size(original_size)
-            temp = self._get_temp_path()
-            new_path = self._downsize(img, temp, target_size, self.transform, force_format=force_format)
-            meta = self._get_image_metadata(new_path)
-            log.debug('Processing image: {} {}'.format(self.transform, target_size))
+            # без изменений
+            new_path = self._get_temp_path(ext=extension)
 
+            with open(new_path, 'wb') as new_file:
+                src.stream.seek(0)
+                new_file.write(src.stream.read())
+
+        meta = self._get_image_metadata(new_path)
         new_src = storage.asset_source_adapter(new_path, extension=extension)
 
         def when_done():
